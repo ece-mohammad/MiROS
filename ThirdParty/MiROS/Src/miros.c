@@ -3,7 +3,7 @@
  * @brief   MiROS (Minimal Real-time Operating System) for embedded systems
  * @author  Mohammad Mohsen
  * @date    2023/08/24
- * @version 0.1.0
+ * @version 0.2.0
  * @license MIT License
  *          Copyright 2023, Mohammad Mohsen
  *          Permission is hereby granted, free of charge, to any person
@@ -29,56 +29,63 @@
 #include <stddef.h>
 #include "stm32f1xx_hal.h"
 #include "miros.h"
+#include "round_robin.h"
 
+/**
+ * @brief Stack addresses (start and end) alignment
+ *
+ * ARM cortex requires stack to be aligned to word or double word addresses,
+ * to make use of efficient data transfer instructions.
+ * So, task's stack start & end addresses are aligned to the controller's
+ * stack alignment, specified by `MIROS_STACK_ALIGNMENT` macro.
+ *
+ * stack in ARM cortex M3 grows towards lower addresses (decrementing stack).
+ * sp (stack pointer) is assigned the end of allocated memory block for
+ * the task's stack, than aligned to the
+ * The start of the memory block is also aligned to the current address,
+ * or the next aligned address.
+ * */
 #define MIROS_STACK_ALIGNMENT       8
 #define MIROS_STACK_ALIGN_MASK      ((uint32_t)~(MIROS_STACK_ALIGNMENT - 1))
+
+/**
+ * @brief Default return from interrupt code (return to thread mode w/ MSP)
+ * */
 #define MIROS_EXCEPTION_RETURN      0xFFFFFFF9
+
+/**
+ * @brief Default value to be pre-loaded into PSR
+ * */
 #define MIROS_DEFAULT_PSR           0x21000000
 
+/**
+ * @brief Trigger PendSV interrupt
+ * */
 #define MIROS_PEND_SVCall()         \
   do{  \
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  \
   }while(0)
 
-static Task_t *Miros_TaskQueue[MIROS_NUM_TASKS] = { 0 };
-static uint32_t Miros_AddedTasks = 0;    // tail
-static uint32_t MIROS_CurrentTaskIndex = 0; // head
+static Task_t Miros_IdleTask = { 0 };
 
 static Task_t *Miros_RunningTask = NULL;
 static Task_t *Miros_NextTask = NULL;
 
-void MIROS_Initialize(void) {
-  /*  intilize task queue  */
-  for (uint32_t task_index = 0; task_index < MIROS_NUM_TASKS; task_index++) {
-    Miros_TaskQueue[task_index] = NULL;
-  }
-  Miros_AddedTasks = 0;
-
-  /*  initlaize task scheduler  */
-  Miros_RunningTask = NULL;
-  Miros_NextTask = NULL;
-}
-
-void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
-    uint32_t stack_size) {
-
-  /* check that number of added tasks is less than MIROS_NUM_TASKS */
-  assert_param(Miros_AddedTasks < MIROS_NUM_TASKS);
-
+/**
+ * @brief aligns ask's stack start address, end address to
+ * #MIROS_STACK_ALIGNMENT bytes (8). And modifies stack size
+ * accordingly.
+ *
+ * @pre @p task structure members are initialized
+ *
+ * @param [in, out] task pointer to the task structure
+ *
+ * @return void
+ * */
+static void Miros_AlignStack(Task_t *task) {
+  uint32_t *stack = task->stack;
+  uint32_t stack_size = task->stack_size;
   uint32_t *sp;
-
-  /**
-   * ARM cortex requires stack to be aligned to word or double word addresses,
-   * to make use of efficient data transfer instructions.
-   * So, task's stack start & end addresses are aligned to the controller's
-   * stack alignment, specified by `MIROS_STACK_ALIGNMENT` macro.
-   *
-   * stack in ARM cortex M3 grows towards lower addresses (decrementing stack).
-   * sp (stack pointer) is assigned the end of allocated memory block for
-   * the task's stack, than aligned to the
-   * The start of the memory block is also aligned to the current address,
-   * or the next aligned address.
-   * */
 
   /*    align stack start   */
   sp = (stack + stack_size);
@@ -88,9 +95,32 @@ void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
   stack = (uint32_t*) ((((uint32_t) stack - 1) & MIROS_STACK_ALIGN_MASK)
       + MIROS_STACK_ALIGNMENT);
 
+  /* update stack size */
   stack_size = (uint32_t) (sp - stack);
 
-  /*    initialize task stack content   */
+  /* fill task structure */
+  task->stack = stack;
+  task->stack_size = stack_size;
+  task->stack_ptr = (uint32_t) sp;
+}
+
+/**
+ * Prepare task's structure, and pre-fill the task's stack with appropriate
+ * values so that the task can be context-switched
+ *
+ * @param [in] task pointer to task's structure
+ * @param [in] handle pointer to task's handle
+ * @param [in] stack pointer to task's allocated stack memory
+ * @param [in] stack_size number of allocated memory words for the task's stack
+ *
+ * @return void
+ * */
+static void Miros_PrepareStack(Task_t *task) {
+  uint32_t *stack = task->stack;
+  TaskHandle_t handle = task->handle;
+  uint32_t *sp = (uint32_t*) task->stack_ptr;
+
+  /* initialize task stack content */
   *(--sp) = MIROS_DEFAULT_PSR; /* PSR */
   *(--sp) = (uint32_t) handle; /* PC  */
   *(--sp) = 0x11111111; /* LR  */
@@ -109,31 +139,50 @@ void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
   *(--sp) = 0xDEADBAAF; /* R10 */
   *(--sp) = 0xDEADBBBF; /* R11 */
 
+  /* pre-fill the rest of the stack with a pre-defined pattern (helps to visualize stack usage) */
   for (uint32_t *mem = sp; mem > stack;) {
     *(--mem) = 0xDEADBEEF;
   }
 
-  /*    initialize stack structure  */
+  /* update stack pointer  */
+  task->stack_ptr = (uint32_t) sp;
+}
+
+void MIROS_Initialize(TaskHandle_t idle_handle, uint32_t *idle_stack,
+    uint32_t stack_size) {
+
+  /*  initialize task scheduler  */
+  Miros_RunningTask = NULL;
+  Miros_NextTask = NULL;
+
+  /* initialize Idle task */
+  Miros_IdleTask.handle = idle_handle;
+  Miros_IdleTask.stack = idle_stack;
+  Miros_IdleTask.stack_size = stack_size;
+
+  Miros_AlignStack(&Miros_IdleTask);
+  Miros_PrepareStack(&Miros_IdleTask);
+
+  Scheduler_Initialize();
+}
+
+void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
+    uint32_t stack_size) {
+
   task->handle = handle;
   task->stack = stack;
   task->stack_size = stack_size;
-  task->stack_ptr = (uint32_t) sp;
 
-  /*    add task from task queue & update number of added tasks    */
-  Miros_TaskQueue[Miros_AddedTasks] = task;
-  Miros_AddedTasks++;
+  Miros_AlignStack(task);
+  Miros_PrepareStack(task);
+
+  /* add task from task queue & update number of added tasks */
+  Scheduler_AddTask(task);
 }
 
 void MIROS_Sched(void) {
-
-  assert_param(Miros_AddedTasks > 0);
-
-  /*    get task from task queue    */
-  Miros_NextTask = Miros_TaskQueue[MIROS_CurrentTaskIndex];
-  MIROS_CurrentTaskIndex++;
-  if (MIROS_CurrentTaskIndex == Miros_AddedTasks) {
-    MIROS_CurrentTaskIndex = 0;
-  }
+  /* get task from task queue */
+  Miros_NextTask = Scheduler_GetTask();
 
   MIROS_PEND_SVCall();
 }
@@ -143,7 +192,7 @@ void HAL_SYSTICK_Callback(void) {
 }
 
 void PendSV_Handler(void) {
-  /* switch out current task    */
+  /* switch out current task */
 
   if (Miros_RunningTask != NULL) {
     // save GPR registers
@@ -166,7 +215,7 @@ void PendSV_Handler(void) {
     );
   }
 
-  /* switch in next task    */
+  /* switch in next task */
 
   /**
    * If at least 1 task is added, Miros_NextTask will never be NULL.

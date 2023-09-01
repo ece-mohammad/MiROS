@@ -3,7 +3,7 @@
  * @brief   MiROS (Minimal Realtime Operating System) for embedded systems
  * @author  Mohammad Mohsen
  * @date    2023/08/24
- * @version 0.1.0
+ * @version 0.2.0
  * @license MIT license
  *          Copyright 2023, Mohammad Mohsen
  *          Permission is hereby granted, free of charge, to any person
@@ -51,7 +51,7 @@ typedef void (*TaskHandle_t)(void);
  *    It's recommended that the stack is double word aligned,
  *    as MiROS will align the stack to double word. This might result in
  *    some locations in the allocated stack not being utilized by MiROS.
- * uint32_t stack_size: Number ogf allocated memory **words** (not bytes)
+ * uint32_t stack_size: Number of allocated memory **words** (not bytes)
  *    for the stack.
  * uint32_t stack_ptr: Current task's stack pointer (top of stack), indicates
  *    how much stack is currently used by the task.
@@ -78,10 +78,14 @@ typedef struct {
  * internal variables. Must be called before adding any tasks, and before
  * any interrupts are enabled.
  *
- * @param void
+ * @param [in] idle_handle Idle task's handle (pointer o idle task's function)
+ * @param [in] idle_stack pointer to Idle task's stack
+ * @param [in] stack_size Idle task's stack size
+ *
  * @return void
  * */
-void MIROS_Initialize(void);
+void MIROS_Initialize(TaskHandle_t idle_handle, uint32_t *idle_stack,
+    uint32_t stack_size);
 
 /**
  * @brief Initialize MiROS task structure, and adds the task to MiROS task
@@ -98,7 +102,9 @@ void MIROS_Initialize(void);
  * @param [in] task pointer to the task structure to be initialized
  * @param [in] handle address to the task's function
  * @param [in] stack pointer to the stack's allocated stack memory
- * @param [in] stack_size size of the allocated task's stack emmory
+ * @param [in] stack_size size of the allocated task's stack memory
+ *
+ * @return void
  * */
 void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
     uint32_t stack_size);
@@ -110,10 +116,11 @@ void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
  * @pre #MIROS_Initialize() was called
  * @pre At least 1 task was added
  *
- * @post A task is seleced, and is switched in to be executed
+ * @post A task is selected, and is switched in to be executed
  *    for 1 OS tick duration
  *
  * @param void
+ *
  * @param void
  * */
 void MIROS_Sched(void);
