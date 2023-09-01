@@ -34,8 +34,8 @@
 #define MIROS_NUM_TASKS             32
 
 /**
- * @brief Task handle (function) typedef. The task handle is the address 
- * of a normal C function, that is called when the task is ready to be executed. 
+ * @brief Task handle (function) typedef. The task handle is the address
+ * of a normal C function, that is called when the task is ready to be executed.
  * MiROS task handles must be in he form of an infinite loop, and never to return.
  * */
 typedef void (*TaskHandle_t)(void);
@@ -43,39 +43,39 @@ typedef void (*TaskHandle_t)(void);
 /**
  * @brief Task structure, that holds task's information
  *
- * uint32_t * stack: pointer to the task's allocated stack. The task's stack 
+ * uint32_t * stack: pointer to the task's allocated stack. The task's stack
  *    can be allocated in any manner the application deems fit.
- *    However, the stack must be allocated either statically (static local, 
- *    static global or global scopes), or dynamically (using dynamic memory 
+ *    However, the stack must be allocated either statically (static local,
+ *    static global or global scopes), or dynamically (using dynamic memory
  *    allocation). But never locally (as an automatic variable)
- *    It's recommended that the stack is double word aligned, 
- *    as MiROS will align the stack to double word. This might result in 
+ *    It's recommended that the stack is double word aligned,
+ *    as MiROS will align the stack to double word. This might result in
  *    some locations in the allocated stack not being utilized by MiROS.
- * uint32_t stack_size: Number ogf allocated memory **words** (not bytes) 
+ * uint32_t stack_size: Number ogf allocated memory **words** (not bytes)
  *    for the stack.
- * uint32_t stack_ptr: Current task's stack pointer (top of stack), indicates 
+ * uint32_t stack_ptr: Current task's stack pointer (top of stack), indicates
  *    how much stack is currently used by the task.
- * TaskHandle_t handle: The task's handle, or function that will be called 
+ * TaskHandle_t handle: The task's handle, or function that will be called
  *    to run when the task is ready. It must be in the form of an infinite loop
  *    and never return.
  *
- * > MiROS keeps added tasks in a FIFO task queue, that means 
- * > tasks that are added first, are schewduled first.
+ * > MiROS keeps added tasks in a FIFO task queue, that means
+ * > tasks that are added first, are scheduled first.
  *
  * > The task queue keeps pointers to the added tasks' structures. That
  * > means MiROS requires the tasks' structures to be allocated either
  * > statically, or dynamically, but never locally.
  * */
 typedef struct {
-  intptr_t *stack; 
+  uint32_t *stack;
   uint32_t stack_size;
   uint32_t stack_ptr;
   TaskHandle_t handle;
 } Task_t;
 
 /**
- * @brief Initialize MiROS. Clears MiROS task queue and Initializes its 
- * internal variables. Must be called before adding any tasks, and before 
+ * @brief Initialize MiROS. Clears MiROS task queue and Initializes its
+ * internal variables. Must be called before adding any tasks, and before
  * any interrupts are enabled.
  *
  * @param void
@@ -84,15 +84,15 @@ typedef struct {
 void MIROS_Initialize(void);
 
 /**
- * @brief Initialize MiROS task structure, and adds the task to MiROS task 
+ * @brief Initialize MiROS task structure, and adds the task to MiROS task
  * queue.
  *
  * @pre #MIROS_Initialized() was called
  * @pre Number of previously added tasks is less than #MIROS_NUM_TASKS
  *
- * @post @p task is added to MiROS task queue, in the next empty location in 
+ * @post @p task is added to MiROS task queue, in the next empty location in
  *    the task queue.
- * @post @p task will be scheduled to execute after all previously added tasks are 
+ * @post @p task will be scheduled to execute after all previously added tasks are
  *    scheduled.
  *
  * @param [in] task pointer to the task structure to be initialized
@@ -104,13 +104,13 @@ void MIROS_TaskInitialize(Task_t *task, TaskHandle_t handle, uint32_t *stack,
     uint32_t stack_size);
 
 /**
- * @param Start MiROS RTOS scheduler, which selects the next ready task 
+ * @param Start MiROS RTOS scheduler, which selects the next ready task
  * to be executed.
  *
  * @pre #MIROS_Initialize() was called
  * @pre At least 1 task was added
  *
- * @post A task is seleced, and is switched in to be executed 
+ * @post A task is seleced, and is switched in to be executed
  *    for 1 OS tick duration
  *
  * @param void
